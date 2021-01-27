@@ -5,10 +5,10 @@ import pickle
 
 
 
-class ScoreModel(nn.Module):
+class RankModel(nn.Module):
 
 	def __init__(self, hidden_sizes, embedding_parameters, embedding_dim, vocab_size, dropout_p, weights, trainable_weights):
-		super(ScoreModel, self).__init__()
+		super(RankModel, self).__init__()
 
 		self.model_type = 'score-interaction'
 
@@ -33,19 +33,21 @@ class ScoreModel(nn.Module):
 		self.layers = nn.ModuleList()
 		if len(hidden_sizes) > 0:
 			self.layers.append( nn.Linear(in_features=self.embedding_dim * 2, out_features=hidden_sizes[0]))
-			self.layers.append(nn.Dropout(p=dropout_p))
 			self.layers.append(nn.ReLU())
+			self.layers.append(nn.Dropout(p=dropout_p))
 
 		for k in range(len(hidden_sizes)-1):
 			self.layers.append(nn.Linear(in_features=hidden_sizes[k], out_features=hidden_sizes[k+1]))
-			self.layers.append(nn.Dropout(p=dropout_p))
 			self.layers.append(nn.ReLU())
+			self.layers.append(nn.Dropout(p=dropout_p))
 
 		#self.linear = nn.Linear(in_features=self.embedding_dim, out_features=self.embedding_dim)
 		if len(hidden_sizes) > 0:
 			self.layers.append( nn.Linear(in_features=hidden_sizes[-1], out_features=out_size))
+			self.layers.append(nn.Dropout(p=dropout_p))
 		else:
 			self.layers.append( nn.Linear(in_features=embedding_dim * 2, out_features=out_size))
+			self.layers.append(nn.Dropout(p=dropout_p))
 		print(self)
 
 	def forward(self, q, doc, lengths_q=None, lengths_d=None):
