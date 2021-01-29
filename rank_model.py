@@ -3,36 +3,37 @@ import torch
 import torch.nn as nn
 import pickle
 
-
+from transformers import BertModel, BertConfig
 
 class RankModel(nn.Module):
 
-	def __init__(self, hidden_sizes, embedding_parameters, embedding_dim, vocab_size, dropout_p, weights, trainable_weights):
+	def __init__(self, hidden_sizes, embedding, dropout_p, compositionality_weights, freeze_embeddings=False):
 		super(RankModel, self).__init__()
 
-		self.model_type = 'score-interaction'
-
 		self.hidden_sizes = hidden_sizes
-
-		# load or randomly initialize embeddings according to parameters
-		if embedding_parameters is None:
-			self.embedding_dim = embedding_dim
-			self.vocab_size = vocab_size
-			self.embedding = torch.nn.Embedding(vocab_size, embedding_dim)
-			# set embeddings for model
-		else:
-			self.embedding = nn.Embedding.from_pretrained(embedding_parameters, freeze=False)
-			self.embedding_dim = embedding_parameters.size(1)
-			self.vocab_size = embedding_parameters.size(0)
-
-		self.weighted_average = EmbeddingWeightedAverage(weights = weights, vocab_size = self.vocab_size, trainable = trainable_weights) # (weights, vocab_size, trainable = True)
-
+		self.embedding = embedding
 		out_size = 1
+		
+		if embedding is not 'bert':
+			# load or randomly initialize embeddings according to parameters
+			self.embedding_dim = embedding.embedding_dim * 2
+			self.vocab_size = embedding.num_embeddings
+			self.weighted_average = EmbeddingWeightedAverage(weights = compositionality_weights, vocab_size = self.vocab_size, trainable = True) # (weights, vocab_size, trainable = True)
+		else:
+			#bert_config = BertConfig(num_hidden_layers=2)
+			self.bert = BertModel.from_pretrained('bert-base-uncased')
+			self.embedding_dim = self.bert.embeddings.word_embeddings.embedding_dim 
+			if freeze_embeddings:
+				for param in self.bert.parameters():
+					param.requires_grad = False
+
+
+
 
 		# create module list
 		self.layers = nn.ModuleList()
 		if len(hidden_sizes) > 0:
-			self.layers.append( nn.Linear(in_features=self.embedding_dim * 2, out_features=hidden_sizes[0]))
+			self.layers.append( nn.Linear(in_features=embedding_dim, out_features=hidden_sizes[0]))
 			self.layers.append(nn.ReLU())
 			self.layers.append(nn.Dropout(p=dropout_p))
 
@@ -44,27 +45,38 @@ class RankModel(nn.Module):
 		#self.linear = nn.Linear(in_features=self.embedding_dim, out_features=self.embedding_dim)
 		if len(hidden_sizes) > 0:
 			self.layers.append( nn.Linear(in_features=hidden_sizes[-1], out_features=out_size))
-			self.layers.append(nn.Dropout(p=dropout_p))
 		else:
-			self.layers.append( nn.Linear(in_features=embedding_dim * 2, out_features=out_size))
-			self.layers.append(nn.Dropout(p=dropout_p))
+			self.layers.append( nn.Linear(in_features=self.embedding_dim, out_features=out_size))
 		print(self)
 
-	def forward(self, q, doc, lengths_q=None, lengths_d=None):
 
+	def forward_average(self, encoded_query, encoded_doc, lengths_q, lengths_d):
 		# get embeddings of all inps
-		emb_q = self.embedding(q)
-		emb_d = self.embedding(doc)
+		emb_q = self.embedding(encoded_query)
+		emb_d = self.embedding(encoded_doc)
 		# calculate weighted average embedding for all inps
-		w_av_q = self.weighted_average(q, emb_q, lengths = lengths_q)
-		w_av_d = self.weighted_average(doc, emb_d, lengths = lengths_d)
+		w_av_q = self.weighted_average(encoded_query, emb_q, lengths = lengths_q)
+		w_av_d = self.weighted_average(encoded_doc, emb_d, lengths = lengths_d)
 		q_d =  torch.cat([w_av_q, w_av_d], dim=1)
+		return q_d
+
+	def forward_bert(self, inp):
+		#outputs = self.bert(input_ids=inp['input_ids'], token_type_ids=inp['token_type_ids'], attention_mask=inp['attention_mask'])
+		outputs = self.bert(**inp)
+		encoded_layers = outputs.last_hidden_state[:,0,:]
+		return encoded_layers
+
+	def forward(self, inp):
+
+		if self.embedding == 'bert':
+			q_d = self.forward_bert(inp)
+		else:
+			q_d = self.forward_average(**inp)
+
 		# getting scores of joint q_d representation
 		for layer in self.layers:
 			q_d = layer(q_d)
 		return q_d
-
-
 
 class EmbeddingWeightedAverage(nn.Module):
 	def __init__(self, weights, vocab_size, trainable = True):
@@ -131,3 +143,21 @@ class EmbeddingWeightedAverage(nn.Module):
 		# we first calculate the weighted sum
 		weighted_average = (weights * values * mask).sum(dim = 1)
 		return weighted_average
+
+
+def load_glove_embedding_weights(DATA_EMBEDDINGS, token2id, embedding_dim=300):
+	embedding_dim = len(token2id)
+	embedding_weighs = torch.nn.Embedding(vocab_size, embedding_dim) 
+	glove = {}
+	# read glove
+	with open( DATA_EMBEDDINGS, 'r') as f:
+		for line in f:
+			term, weights = line.split('t')
+			weights_np = np.from_string(weights, dtype=int, sep=' ')
+			glove[term] = weights_np
+
+
+	for token in token2id:
+		if token in glove:
+			embedding_weights[token2id[token]] = glove[token]
+	return embedding_weights
