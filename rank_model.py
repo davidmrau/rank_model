@@ -7,25 +7,28 @@ from transformers import BertModel, BertConfig
 
 class RankModel(nn.Module):
 
-	def __init__(self, hidden_sizes, embedding, dropout_p, compositionality_weights, freeze_embeddings=False, num_bert_layers=None):
+	def __init__(self, hidden_sizes, embedding, dropout_p, compositionality_weights, freeze_embeddings=False, bert_layers='all'):
 		super(RankModel, self).__init__()
 		
 		self.hidden_sizes = hidden_sizes
 		self.embedding_type = embedding
 		out_size = 1
-		if self.embedding_type !=  'bert':
+		if self.embedding_type == 'glove' or bert_layers == 'embeddings':
 			# load or randomly initialize embeddings according to parameters
 			self.embedding = embedding
 			self.embedding_dim = embedding.embedding_dim * 2
 			self.vocab_size = embedding.num_embeddings
 			self.weighted_average = EmbeddingWeightedAverage(weights = compositionality_weights, vocab_size = self.vocab_size, trainable = True) # (weights, vocab_size, trainable = True)
-		else:
-			if num_bert_layers:
-				bert_config = BertConfig(num_hidden_layers=num_bert_layers)
-			else:
+		elif self.embedding_type == 'bert':
+			if bert_layers == 'all':
 				bert_config = None
+			else:
+				bert_config = BertConfig(num_hidden_layers=int(bert_layers))
 			self.embedding = BertModel.from_pretrained('bert-base-uncased', config=bert_config)
-			self.embedding_dim = self.embedding.embeddings.word_embeddings.embedding_dim 
+			self.embedding_dim = self.embedding.embeddings.word_embeddings.embedding_dim
+		else:
+			raise NotImplementedError()
+
 		if freeze_embeddings:
 			for param in self.embedding.parameters():
 				param.requires_grad = False
@@ -55,15 +58,13 @@ class RankModel(nn.Module):
 			self.layers.append( nn.Linear(in_features=self.embedding_dim, out_features=out_size))
 		print(self)
 
-
-	def forward_average(self, encoded_query, encoded_doc, lengths_q, lengths_d, max_length_q, max_length_d):
+	def forward_average(self, encoded_query, encoded_doc, lengths_q, lengths_d):
 		# get embeddings of all inps
 		emb_q = self.embedding(encoded_query)
 		emb_d = self.embedding(encoded_doc)
 		# calculate weighted average embedding for all inps
-
-		w_av_q = self.weighted_average(encoded_query, emb_q, lengths = lengths_q, max_length=max_length_q)
-		w_av_d = self.weighted_average(encoded_doc, emb_d, lengths = lengths_d, max_length=max_length_d)
+		w_av_q = self.weighted_average(encoded_query, emb_q, lengths = lengths_q)
+		w_av_d = self.weighted_average(encoded_doc, emb_d, lengths = lengths_d)
 			
 		q_d =  torch.cat([w_av_q, w_av_d], dim=1)
 		return q_d
@@ -79,7 +80,6 @@ class RankModel(nn.Module):
 			q_d = self.forward_bert(inp)
 		else:
 			q_d = self.forward_average(**inp)
-
 		# getting scores of joint q_d representation
 		for layer in self.layers:
 			q_d = layer(q_d)
@@ -128,16 +128,13 @@ class EmbeddingWeightedAverage(nn.Module):
 		#return values.sum(1).div(lengths.float().view(-1, 1))
 
 		# calculate the weight of each term
-		weights = self.weights(inp)
-		
+		weights = self.weights(inp)	
 		if mask is None:
 			if lengths is None:
 				raise ValueError("EmbeddingWeightedAverage : weighted_average(), mask and lengths cannot be None at the same time!")
-			if max_length is None:
-				raise ValueError("Pass batch max_length to model as it is needed for multi-gpu training and can not be inferred from a single sub-batch!")
 
 			mask = torch.zeros_like(inp, dtype=torch.bool)
-			range_tensor = torch.arange(max_length).unsqueeze(0)
+			range_tensor = torch.arange(inp.shape[1]).unsqueeze(0)
 
 			if values.is_cuda:
 				range_tensor = range_tensor.cuda()

@@ -5,7 +5,7 @@ import pickle
 from torch.nn.utils.rnn import pad_sequence
 import time
 import os 
-
+from transformers import BertConfig, BertModel
 class BasicTokenizer():
 
 	def __init__(self, token2id):
@@ -13,7 +13,6 @@ class BasicTokenizer():
 
 	def __call__(self, batch_texts, return_tensor=False, padding=False, max_length=None, if_empty=None):
 		batch_encoded_ids = list()
-		batch_lengths = list()
 		#t_token = time.time()
 		for text in batch_texts:
 			tokenized = nltk.word_tokenize(text)
@@ -28,30 +27,67 @@ class BasicTokenizer():
 			if len(encoded_ids) == 0:
 				if if_empty != None:
 					encoded_ids = [self.token2id[if_empty]]	
-			batch_lengths.append(len(encoded_ids))
 			batch_encoded_ids.append(encoded_ids)
 
-		batch_encoded_ids = self.wrap_batch(batch_encoded_ids, batch_lengths, max_length=max_length, padding=padding, return_tensor=return_tensor, if_empty=if_empty)
+		batch_encoded_ids, batch_lengths = self.wrap_batch(batch_encoded_ids, max_length=max_length, padding=padding, return_tensor=return_tensor, if_empty=if_empty)
 		#print(f'encode_time: {time.time() - t_token}')
-
 		return batch_encoded_ids, batch_lengths	
+
+
+	def pad(self, batch_ids, max_length=None, if_empty=None):
+		batch_ids = [enc[:max_length] for enc in batch_ids]
+		batch_lengths = [len(enc) for enc in batch_ids]
+		batch_max_length = max(batch_lengths)
+		ids_pad = np.zeros((len(batch_lengths), min(batch_max_length, max_length) if max_length else batch_max_length))
+		for i, ids in enumerate(batch_ids):
+			if len(ids) == 0:
+				if if_empty != None:
+					ids = [self.token2id[if_empty]]	
+			ids_pad[ i , :len(ids)] = ids
+		return ids_pad, batch_lengths
+
+	
+	def wrap_batch_bert(self, q_batch_encoded_ids, d_batch_encoded_ids,  max_length_q=None, max_length_doc=None, padding=False, return_tensor=False, if_empty=None, add_special_tokens=False, truncation='only_second'):
+
+		if truncation != 'only_second':
+			raise NotImplementedError()
+
+		if add_special_tokens:
+			raise NotImplementedError()
+
+		
+		batch_lengths_q = [len(enc_q) + 2 for enc_q in q_batch_encoded_ids]
+		
+		batch_comb, token_type_ids = list(), list()
+		for i in range(len(q_batch_encoded_ids)):	
+			q, d, q_len = q_batch_encoded_ids[i], d_batch_encoded_ids[i], batch_lengths_q[i]
+			d = d[:max_length_doc - q_len - 1 ]
 			
-	def wrap_batch(self, batch_encoded_ids, batch_lengths, max_length=None, padding=False, return_tensor=False, if_empty=None):
+			comb = np.concatenate(( [101], q, [102],  d, [102]))
+			pad_arr = (max_length_doc - len(comb)) * [0]
+			token_type_id = q_len * [0] + (max_length_doc - q_len) * [1]
+			comb_pad = np.concatenate((comb, pad_arr))
+			batch_comb.append(comb_pad)
+			token_type_ids.append(token_type_id)
+
+		batch_encoded_ids, batch_lengths = self.wrap_batch(batch_comb, padding=False, return_tensor=return_tensor, if_empty=if_empty)
+		attention_mask = (batch_encoded_ids != 0).long()
+		return batch_encoded_ids, torch.LongTensor(token_type_ids), attention_mask
+
+
+	def wrap_batch(self, batch_encoded_ids, max_length=None, padding=False, return_tensor=False, if_empty=None):
 		#t_pad = time.time()
-		batch_max_length = np.max(batch_lengths)
+		if max_length:
+			batch_encoded_ids = [ids[:max_length] for ids in batch_encoded_ids]
 		if padding:
-			batch_encoded_ids_pad = np.zeros((len(batch_lengths), min(batch_max_length, max_length)))
-			for i, ids in enumerate(batch_encoded_ids):
-				ids = ids[:max_length]
-				if len(ids) == 0:
-					if if_empty != None:
-						encoded_ids = [self.token2id[if_empty]]	
-				batch_encoded_ids_pad[ i , :len(ids)] = ids
-			batch_encoded_ids = batch_encoded_ids_pad
+			batch_encoded_ids, batch_lengths = self.pad(batch_encoded_ids, max_length=max_length, if_empty=if_empty)
+		else:
+			batch_lengths = [len(enc) for enc in batch_encoded_ids]
 		#print(f'pad_time: {time.time() - t_pad}')
 		if return_tensor:
 			batch_encoded_ids = torch.LongTensor(batch_encoded_ids)
-		return batch_encoded_ids	
+			batch_lengths = torch.LongTensor(batch_lengths)
+		return batch_encoded_ids, batch_lengths	
 
 def load_cache(filename):
 	if os.path.exists(filename):
@@ -92,6 +128,13 @@ def load_glove_embedding(DATA_EMBEDDINGS, token2id_path, embedding_dim=300):
 	return embedding
 
 
+def load_bert_embedding():
+	bert_config = BertConfig(num_hidden_layers=1)
+	bert = BertModel.from_pretrained('bert-base-uncased', config=bert_config)
+	embedding = torch.nn.Embedding.from_pretrained(bert.embeddings.word_embeddings.weight, freeze=False)	
+	return embedding
+
+
 class TensorDict():
 	def __init__(self, d):
 		self.d = d
@@ -101,7 +144,8 @@ class TensorDict():
 				self.d[k] = self.d[k].to(DEVICE)	
 		return self.d
 
-
+	def __getitem__(self, key):
+		return self.d[key]
 
 
 def l2_reg(model):

@@ -82,7 +82,7 @@ def generate_triplets(args):
 		relevant = perfectly_relevant + highly_relevant + related	
 		num_of_triplets = len(relevant)
 		if args.docs:
-			irrelevant = all_docs
+			irrelevant = [ d for d in all_docs if d not in relevant]
 		irrelevant = np.random.choice(list(irrelevant), num_of_triplets, replace=False)
 
 		print('relevant', len(relevant))
