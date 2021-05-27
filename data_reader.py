@@ -27,7 +27,7 @@ class DataReader(torch.utils.data.IterableDataset):
 		self.max_length_doc = max_length_doc
 		self.sample_random_docs = sample_random_docs
 		self.qrel_columns = qrel_columns
-		if encoding == 'bert' :
+		if 'bert' in encoding :
 			if encoded:
 				self.tokenizer = BasicTokenizer(None)
 			else:
@@ -100,7 +100,14 @@ class DataReader(torch.utils.data.IterableDataset):
 						d_encoded, lengths_d = self.tokenizer([bd[i] for bd in batch_docs], padding=True, return_tensor=True, max_length=self.max_length_doc, if_empty='<pad>')
 						encoded_dict = TensorDict({'encoded_query': q_encoded, 'encoded_doc': d_encoded , 'lengths_q':  lengths_q, 'lengths_d': lengths_d})	
 						features['encoded_input'].append(encoded_dict)
+				elif self.encoding == 'sparse-bert' :
+					features['encoded_queries'] = TensorDict(self.tokenizer(batch_queries, padding=True, 
+					return_tensors="pt", max_length=self.max_length_doc))
 
+					features['encoded_docs'] = [TensorDict(self.tokenizer([bd[i] for bd in batch_docs], padding=True, 
+					return_tensors="pt")) for i in range(self.num_docs)]
+				else:
+					raise NotImplementedError()
 			else:
 				if self.encoding == 'bert':
 					for i in range(self.num_docs):

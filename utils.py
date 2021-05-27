@@ -102,8 +102,10 @@ def load_glove_embedding(DATA_EMBEDDINGS, token2id_path, embedding_dim=300):
 	embedding = load_cache(fname)
 	if embedding == None:
 		# if not cached make embedding
-		vocab_size = len(token2id)
+		#vocab_size = len(token2id)
+		vocab_size = max(token2id.values()) + 1
 		weight_matrix = np.random.normal(scale=0.6, size=(vocab_size, embedding_dim))
+		print(f'Embeddings size: {vocab_size}, {embedding_dim}')
 		glove = {}
 		# read glove
 		with open( DATA_EMBEDDINGS, 'r') as f:
@@ -127,7 +129,8 @@ def load_glove_embedding(DATA_EMBEDDINGS, token2id_path, embedding_dim=300):
 		pickle.dump(embedding, open(fname, 'wb'))
 	return embedding
 
-
+def load_rand_embedding(vocab_size, dim):
+	return torch.nn.Embedding(vocab_size, dim)
 def load_bert_embedding():
 	bert_config = BertConfig(num_hidden_layers=1)
 	bert = BertModel.from_pretrained('bert-base-uncased', config=bert_config)
@@ -154,3 +157,56 @@ def l2_reg(model):
 		if 'bert' not in name and 'embedding' not in name:
 	    		l2 += torch.norm(param)
 	return l2
+
+
+
+class BERT_inter(torch.nn.Module):
+	def __init__(self, hidden_size = 256, num_of_layers = 2, num_attention_heads = 4, input_length_limit = 512,
+			vocab_size = 30522, embedding_parameters = None, params_to_copy = {}):
+		super(BERT_inter, self).__init__()
+
+
+		self.model_type = "bert-interaction"
+		output_size = 2
+
+		if embedding_parameters is not None:
+			# adjust hidden size and vocab size
+			hidden_size = embedding_parameters.size(1)
+			vocab_size = embedding_parameters.size(0)
+
+
+		intermediate_size = hidden_size*4
+
+		# set up the Bert config
+		config = transformers.BertConfig(vocab_size = vocab_size, hidden_size = hidden_size, num_hidden_layers = num_of_layers,
+										num_attention_heads = num_attention_heads, intermediate_size = intermediate_size, max_position_embeddings = input_length_limit)
+
+		self.encoder = transformers.BertModel(config)
+
+		self.last_linear = torch.nn.Linear(hidden_size, hidden_size)
+
+		self.output_linear = torch.nn.Linear(hidden_size, output_size)
+		# copy all specified parameters
+		for param in params_to_copy:
+
+			param_splitted = param.split(".")
+
+			item = self.encoder.__getattr__(param_splitted[0])
+
+			for p in param_splitted[1: -1]:
+				item  = item.__getattr__(p)
+
+			last_item = param_splitted[-1]
+
+			setattr(item, last_item, params_to_copy[param])
+
+	def forward(self, input_ids, attention_masks, token_type_ids, output_attentions=False, output_hidden_states=False):
+		all_out = self.encoder(input_ids = input_ids, attention_mask=attention_masks, token_type_ids=token_type_ids, output_attentions=output_attentions, output_hidden_states=output_hidden_states)
+		last_hidden_state = all_out.last_hidden_state
+
+		# extract hidden representation of the 1st token, that is the CLS special token
+		cls_hidden_repr = last_hidden_state[:,0]
+
+		out = self.last_linear(cls_hidden_repr)
+
+		out = torch.tanh(out)

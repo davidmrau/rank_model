@@ -7,19 +7,20 @@ from transformers import BertModel, BertConfig
 
 class RankModel(nn.Module):
 
-	def __init__(self, hidden_sizes, embedding, dropout_p, compositionality_weights, freeze_embeddings=False, bert_layers='all'):
+	def __init__(self, hidden_sizes, dropout_p, compositionality_weights, freeze_embeddings=False, bert_layers='all', embedding=None, contextualizer=None):
 		super(RankModel, self).__init__()
 		
 		self.hidden_sizes = hidden_sizes
-		self.embedding_type = embedding
-		out_size = 1
-		if self.embedding_type == 'glove' or bert_layers == 'embeddings':
+		out_size = 2
+		self.contextualizer = contextualizer
+		print( embedding, contextualizer)
+		if embedding is not None and contextualizer == 'average':
 			# load or randomly initialize embeddings according to parameters
 			self.embedding = embedding
 			self.embedding_dim = embedding.embedding_dim * 2
 			self.vocab_size = embedding.num_embeddings
 			self.weighted_average = EmbeddingWeightedAverage(weights = compositionality_weights, vocab_size = self.vocab_size, trainable = True) # (weights, vocab_size, trainable = True)
-		elif self.embedding_type == 'bert':
+		elif contextualizer == 'bert':
 			if bert_layers == 'all':
 				bert_config = None
 			else:
@@ -50,12 +51,14 @@ class RankModel(nn.Module):
 			self.layers.append(nn.Linear(in_features=hidden_sizes[k], out_features=hidden_sizes[k+1]))
 			self.layers.append(nn.ReLU())
 			self.layers.append(nn.Dropout(p=dropout_p))
+		self.embedding_type = embedding
 
 		#self.linear = nn.Linear(in_features=self.embedding_dim, out_features=self.embedding_dim)
 		if len(hidden_sizes) > 0:
 			self.layers.append( nn.Linear(in_features=hidden_sizes[-1], out_features=out_size))
 		else:
 			self.layers.append( nn.Linear(in_features=self.embedding_dim, out_features=out_size))
+		self.layers.append(nn.Tanh())
 		print(self)
 
 	def forward_average(self, encoded_query, encoded_doc, lengths_q, lengths_d):
@@ -76,7 +79,7 @@ class RankModel(nn.Module):
 		return encoded_layers
 
 	def forward(self, inp):
-		if self.embedding_type == 'bert':
+		if self.contextualizer == 'bert':
 			q_d = self.forward_bert(inp)
 		else:
 			q_d = self.forward_average(**inp)
@@ -124,7 +127,6 @@ class EmbeddingWeightedAverage(nn.Module):
 		lengths shape : Bsz x 1
 		mask: if provided, are of shape Bsx x L. Binary mask version of lenghts
 		"""
-
 		#return values.sum(1).div(lengths.float().view(-1, 1))
 
 		# calculate the weight of each term

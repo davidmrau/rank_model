@@ -13,7 +13,7 @@ from unidecode import unidecode
 
 class Tokenizer():
 
-	def __init__(self, tokenizer="bert", max_len=-1, stopwords="lucene", remove_unk = True, dicts_path = "data/embeddings/",
+	def __init__(self, tokenizer="bert", max_len=-1, stopwords="lucene", remove_unk = True, dicts_path = "",
 					lower_case=True, unk_words_filename = None, stemmer = False):
 		"""
 		Stopwords:
@@ -36,17 +36,22 @@ class Tokenizer():
 
 		if self.tokenizer == "bert":
 			self.bert_tokenizer = BertTokenizerFast.from_pretrained('bert-base-uncased')
+		elif dicts_path != '':
+			self.word2idx = pickle.load(open(dicts_path, 'rb'))
 		elif self.tokenizer == "msmarco":
-			self.word2idx = pickle.load(open(dicts_path + 'msmarco_ascii.tsv.vocab_count_400000_t2i.p', 'rb'))
-			self.idx2word = pickle.load(open(dicts_path + 'msmarco_ascii.tsv.vocab_count_400000_i2t.p', 'rb'))
+			self.word2idx = pickle.load(open('msmarco_ascii.tsv.vocab_count_400000_t2i.p', 'rb'))
+			self.idx2word = pickle.load(open('msmarco_ascii.tsv.vocab_count_400000_i2t.p', 'rb'))
 		elif self.tokenizer == "word2vec":
-			self.word2idx = pickle.load(open(dicts_path + 'GoogleNews-vectors-negative300.word2idx.p', 'rb'))
-			self.idx2word = pickle.load(open(dicts_path + 'GoogleNews-vectors-negative300.idx2word.p', 'rb'))
+			self.word2idx = pickle.load(open('GoogleNews-vectors-negative300.word2idx.p', 'rb'))
+			self.idx2word = pickle.load(open('GoogleNews-vectors-negative300.idx2word.p', 'rb'))
 		elif self.tokenizer == "glove":
-			self.word2idx = pickle.load(open(dicts_path + 'glove.6B.300d_word2idx_dict.p', 'rb'))
-			self.idx2word = pickle.load(open(dicts_path + 'glove.6B.300d_idx2word_dict.p', 'rb'))
+			#self.word2idx = pickle.load(open(dicts_path + 'glove.6B.300d_word2idx_dict.p', 'rb'))
+			#self.idx2word = pickle.load(open(dicts_path + 'glove.6B.300d_idx2word_dict.p', 'rb'))
+			#
+			#self.word2idx = pickle.load(open(dicts_path + 'robust04_word_frequency.tsv_64000_t2i.p', 'rb'))
+			self.word2idx = pickle.load(open('robust04_word_frequency.tsv_400000_t2i.p', 'rb'))
 		elif self.tokenizer == 'robust':
-			self.word2idx = pickle.load(open(dicts_path + 'robust_vocab.p', 'rb'))
+			self.word2idx = pickle.load(open('robust_vocab.p', 'rb'))
 		self.max_len = max_len
 		self.remove_unk = remove_unk
 		self.unk_words_filename = unk_words_filename
@@ -76,7 +81,7 @@ class Tokenizer():
 		elif self.tokenizer == "word2vec":
 			self.unk_word = "unk"
 		elif self.tokenizer == "glove":
-			self.unk_word = "unk"
+			self.unk_word = "<unk>"
 
 		elif self.tokenizer == "robust":
 			self.unk_word = "<unk>"
@@ -237,8 +242,6 @@ def tokenize(args):
 					text = text.strip()
 					text = unidecode(text)
 					tokenized_ids = tokenizer.encode(text)
-					print(text)
-					print(tokenized_ids)
 					if len(tokenized_ids) == 0:
 						# writing ids of text that is empty after tokenization
 						empty_ids_f.write(id_ + "\t\n")
@@ -281,7 +284,7 @@ if __name__ == "__main__":
 	parser.add_argument('--input_file', type=str)
 	parser.add_argument('--encoding', default=None, type=str)
 	parser.add_argument('--max_len', default=-1, type=int)
-	parser.add_argument('--dicts_path', type=str, default='data/embeddings/')
+	parser.add_argument('--dicts_path', type=str, default='')
 	parser.add_argument('--tokenizer', type=str, help = "{'bert','glove', 'robust', 'msmarco', 'word2vec'}")
 	parser.add_argument('--stopwords', type=str, default="none", help = "{'none','lucene', 'some/path/file'}")
 	parser.add_argument('--remove_unk', action='store_true')
