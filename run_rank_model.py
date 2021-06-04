@@ -25,11 +25,12 @@ import argparse
 #import csv
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--encoding", type=str, default='glove')
+parser.add_argument("--encoding", type=str, default='bert')
 parser.add_argument("--add_to_dir", type=str, default='')
 parser.add_argument("--model", type=str, default='rank')
 parser.add_argument("--mb_size", type=int, default=256)
 parser.add_argument("--epoch_size", type=int, default=256)
+parser.add_argument("--sparse_dim", type=int, default=1000)
 parser.add_argument("--bert_layers", type=str, default=None)
 parser.add_argument("--lr", type=float, default=0.00001)
 parser.add_argument("--dropout", type=float, default=0.0)
@@ -40,15 +41,13 @@ parser.add_argument("--sample_random_docs", action='store_true')
 parser.add_argument("--freeze_bert", action='store_true')
 parser.add_argument("--freeze_embeddings", action='store_true')
 parser.add_argument("--random_embeddings", action='store_true')
+parser.add_argument("--eval", action='store_true')
 parser.add_argument("--dataset", type=str, required=True)
 parser.add_argument("--compositionality_weights", type=str, default='uniform')
-parser.add_argument('--hidden_dim', type=str, default='128-128')
+parser.add_argument('--hidden_dim', type=str, default='512-512')
 args = parser.parse_args()
 print(args)
 
-args.encoding == args.encoding.lower()
-if args.model == 'sparseBERT':
-	args.encoding = 'sparse-bert'
 
 encoded=args.encoded
 
@@ -60,8 +59,8 @@ EPOCH_SIZE = args.epoch_size
 NUM_EPOCHS = 40
 LEARNING_RATE = args.lr
 test_every = 1
-log_every = EPOCH_SIZE // 8 if EPOCH_SIZE > 8 else EPOCH_SIZE
-encoding = args.encoding #  'glove' or 'bert'
+#log_every = EPOCH_SIZE // 8 if EPOCH_SIZE > 8 else EPOCH_SIZE
+log_every = 1
 
 sample_random_docs = '' if not args.sample_random_docs else '_sample_random_docs_'
 freeze_embeddings = '' if not args.freeze_embeddings else '_fr_emb_'
@@ -70,9 +69,9 @@ encoded = '' if not args.encoded else '_encoded_'
 bert_layers = '' if args.bert_layers == None  else f'_bert_layers_{args.bert_layers}_'
 
 
-experiments_path = f'/project/draugpu/experiments_{args.model}_model/'
+experiments_path = f'experiments_{args.model}_model/'
 
-MODEL_DIR = f'{experiments_path}experiments_{args.dataset}/model_hs_{args.hidden_dim}_{args.encoding}_bz_{args.mb_size}_lr_{args.lr}_{args.compositionality_weights}_do_{args.dropout}{freeze_embeddings}{sample_random_docs}{bert_layers}{random_embeddings}'
+MODEL_DIR = f'{experiments_path}experiments_{args.dataset}/model_bz_{args.mb_size}_lr_{args.lr}_do_{args.dropout}_sr_{sample_random_docs}_sd_{args.sparse_dim}_l1_{str(args.l1_scalar).replace(".", "_")}'
 MODEL_DIR += args.add_to_dir
 
 
@@ -82,8 +81,8 @@ DATA_FILE_IDFS = "data/embeddings/idfnew.norm.tsv"
 TOKEN2ID_PATH = "data/robust/robust04_word_frequency.tsv_64000_t2i.p"
 #TOKEN2ID_PATH = "data/robust/robust04_word_frequency.tsv_400000_t2i.p"
 #TOKEN2ID_PATH = 'data/msmarco/collection.tsv.ascii_vocab_count_64000_t2i.p'
-token2id = pickle.load(open(TOKEN2ID_PATH, 'rb'))
-
+#token2id = pickle.load(open(TOKEN2ID_PATH, 'rb'))
+token2id = None
 
 
 compostionality_weights = args.compositionality_weights
@@ -152,7 +151,7 @@ elif  args.dataset == 'msmarco':
 	QRELS_TEST = "data/msmarco/2020-qrels-pass-no1.txt"
 	# TODO: this has to be changed and is only for a first experiment
 	#DATA_FILE_TEST = "data/msmarco/msmarco-passagetest2019-top1000_43_ranking_results_style.tsv"
-	DATA_FILE_TEST = "data/msmarco/msmarco-passagetest2020-top1000_ranking_results_style.tsv"
+	DATA_FILE_TEST = "data/msmarco/msmarco-passagetest2020-top1000_ranking_results_style_54.tsv"
 	#DATA_FILE_TEST = "data/msmarco/msmarco-passagetest2020-top1000_ranking_results_style.tsv_test"
 
 	if 'glove' in args.encoding and args.encoded and args.bert_layers == None:
@@ -160,11 +159,11 @@ elif  args.dataset == 'msmarco':
 		#ID2Q_TRAIN = "data/msmarco/queries.train.tsv_glove_stop_lucene_64k.tsv"
 		ID2Q_TRAIN = ID2Q_TEST
 		ID2DOC =  "data/msmarco/collection.tsv_glove_stop_lucene_64k.tsv"
-	elif 'bert' in args.encoding  and args.encoded or args.bert_layers != None:
-		ID2Q_TEST = "data/msmarco/msmarco-test2020-queries.tsv_bert_stop_none_remove_unk.tsv"
-		ID2Q_TRAIN = ID2Q_TEST
-		#ID2Q_TRAIN = "data/msmarco/queries.train.tsv_bert_stop_none_remove_unk.tsv" 
-		ID2DOC = "data/msmarco/collection.tsv_bert_stop_none_remove_unk.tsv"
+	#elif 'bert' in args.encoding  and args.encoded or args.bert_layers != None:
+	#	ID2Q_TEST = "data/msmarco/msmarco-test2020-queries.tsv_bert_stop_none_remove_unk.tsv"
+	#	ID2Q_TRAIN = ID2Q_TEST
+	#	#ID2Q_TRAIN = "data/msmarco/queries.train.tsv_bert_stop_none_remove_unk.tsv" 
+	#	ID2DOC = "data/msmarco/collection.tsv_bert_stop_none_remove_unk.tsv"
 	else:
 		ID2Q_TEST = "data/msmarco/msmarco-test2020-queries.tsv"
 		#ID2Q_TEST = "data/msmarco/msmarco-test2019-queries_43.tsv"
@@ -182,21 +181,25 @@ MODEL_FILE = os.path.join(MODEL_DIR, "rank_model.ep{}.pth")
 
 print(f'Saving model to {MODEL_DIR}')
 if os.path.exists(f'{MODEL_DIR}/log/'):
-	shutil.rmtree(f'{MODEL_DIR}/log/')
+		user_inp = input(f"Type 'y' to delete folder: {MODEL_DIR}")
+		if user_inp == 'y':
+			shutil.rmtree(f'{MODEL_DIR}/log/')
+		else:
+			exit()
 
 writer = SummaryWriter(f'{MODEL_DIR}/log/')
 # instantiate Data Reader
-dataset_test = DataReader(encoding, DATA_FILE_TEST, 1, False, id2q_test, id2d, MB_SIZE, max_length_doc=MAX_DOC_TERMS, max_length_query=MAX_QUERY_TERMS, token2id=token2id, encoded=encoded, sample_random_docs=args.sample_random_docs)
-dataset_train = DataReader(encoding, DATA_FILE_TRAIN, 2, True, id2q_train, id2d, MB_SIZE, max_length_doc=MAX_DOC_TERMS, max_length_query=MAX_QUERY_TERMS, token2id=token2id, encoded=encoded, sample_random_docs=args.sample_random_docs)
+dataset_test = DataReader(args.model, DATA_FILE_TEST, 1, False, id2q_test, id2d, MB_SIZE, max_length_doc=MAX_DOC_TERMS, max_length_query=MAX_QUERY_TERMS, token2id=token2id, encoded=encoded, sample_random_docs=args.sample_random_docs, encoding=args.encoding)
+dataset_train = DataReader(args.model, DATA_FILE_TRAIN, 2, True, id2q_train, id2d, MB_SIZE, max_length_doc=MAX_DOC_TERMS, max_length_query=MAX_QUERY_TERMS, token2id=token2id, encoded=encoded, sample_random_docs=args.sample_random_docs, encoding=args.encoding)
 dataloader_test = DataLoader(dataset_test, batch_size=None, num_workers=1, pin_memory=True, collate_fn=dataset_test.collate_fn)
 dataloader_train = DataLoader(dataset_train, batch_size=None, num_workers=1, pin_memory=True, collate_fn=dataset_train.collate_fn)
-if encoding == 'glove' and args.random_embeddings:
+if args.encoding == 'glove' and args.random_embeddings:
 	embedding = load_rand_embedding(64000, 300)
 	contextualizer = 'average'
-elif encoding == 'glove' and args.bert_layers == None:
+elif args.encoding == 'glove' and args.bert_layers == None:
 	embedding = load_glove_embedding(DATA_EMBEDDINGS, TOKEN2ID_PATH)
 	contextualizer = 'average'
-elif encoding == 'glove' and args.bert_layers == 'embeddings':
+elif args.encoding == 'bert':
 	embedding = load_bert_embedding()
 	contextualizer = 'average'
 else:
@@ -208,8 +211,11 @@ else:
 
 if args.model == 'rank':
 	model = RankModel([ int(h) for h in args.hidden_dim.split('-')], args.dropout, compostionality_weights, freeze_embeddings=args.freeze_embeddings, bert_layers=args.bert_layers, embedding=embedding, contextualizer=contextualizer)
+	criterion = nn.CrossEntropyLoss()
 elif args.model == 'sparseBERT':
-	model = SparseBERT(300, args.dropout, args.freeze_bert)
+	criterion = nn.MarginRankingLoss(margin=1)
+	model = SparseBERT(args.sparse_dim, args.dropout, args.freeze_bert)
+
 
 def print_message(s):
 	print("[{}] {}".format(datetime.datetime.utcnow().strftime("%b %d, %H:%M:%S"), s), flush=True)
@@ -226,8 +232,6 @@ else:
 	DEVICE = torch.device("cpu")
 
 model = model.to(DEVICE)
-#criterion = nn.CrossEntropyLoss()
-criterion = nn.MarginRankingLoss(margin=1)
 optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=LEARNING_RATE, weight_decay=0.0001)
 
 
@@ -255,6 +259,9 @@ for ep_idx in range(NUM_EPOCHS):
 	mb_idx = 0
 	while mb_idx + 1 <   EPOCH_SIZE:
 		# get train data
+		l0_loss = 0
+		l1_loss = 0
+		loss = 0 
 		try:
 			features = next(batch_iterator)
 		except StopIteration:
@@ -264,8 +271,9 @@ for ep_idx in range(NUM_EPOCHS):
 			out = tuple([model(features['encoded_input'][i].to(DEVICE)) for i in range(dataset_train.num_docs)])
 			out = torch.cat(out, 1)
 			loss = criterion(out, features['labels'].long().to(DEVICE) * 0)
+			train_loss = loss
 			total_examples_seen += out.shape[0]
-			acc = np.array(((out[:, 0] > out[:, 1]).int()).float().cpu().mean())
+			acc = np.array(((out[:, 0] > out[:,1]).int()).float().cpu().mean())
 			# margin ranking loss 
 			#train_loss = criterion(out[0], out[1], features['labels'].to(DEVICE))
 			#total_examples_seen += out[0].shape[0]
@@ -278,29 +286,34 @@ for ep_idx in range(NUM_EPOCHS):
 			out_neg = torch.bmm(out_queries.unsqueeze(1), out_docs_neg.unsqueeze(-1)).squeeze()
 			acc = np.array(((out_pos > out_neg).int()).float().cpu().mean())
 			#l1_loss = torch.norm(torch.cat([out_queries, out_docs_pos, out_docs_neg], 0), 1) /3 * args.l1_scalar		
-			print(torch.cat([out_queries, out_docs_pos, out_docs_neg], 1).shape)
-			l1_loss = torch.cat([out_queries, out_docs_pos, out_docs_neg], 1).abs().sum(1).mean() * args.l1_scalar
+			l1_loss = torch.cat([out_docs_pos, out_docs_neg, out_queries], 1).abs().sum(1).mean() * args.l1_scalar
+			l0_loss = (torch.cat([out_docs_pos, out_docs_neg, out_queries], 1) == 0).float().mean(1).mean(0)
 			train_loss = criterion(out_pos, out_neg, features['labels'].to(DEVICE))
 			loss = train_loss + l1_loss 
 			total_examples_seen += out_pos.shape[0]
+
 		total_loss += loss
 		optimizer.zero_grad()
 		loss.backward()
 		optimizer.step()
 		if mb_idx % log_every == 0:
 			print(f'MB {mb_idx + 1}/{EPOCH_SIZE}')
-			print_message('examples:{}, loss:{}, l1_loss: {},  acc:{}'.format(total_examples_seen, loss, l1_loss,  acc))
-			writer.add_scalar('Train/Loss', loss, total_examples_seen)
+			print_message('examples:{}, train_loss:{}, l1_loss: {}, l0_loss: {},  acc:{}'.format(total_examples_seen, train_loss, l1_loss, l0_loss,  acc))
+			writer.add_scalar('Loss/Train', train_loss, total_examples_seen)
+			writer.add_scalar('Loss/L0', l0_loss, total_examples_seen)
+			writer.add_scalar('Loss/Total', loss, total_examples_seen)
+			writer.add_scalar('Loss/L1', l1_loss, total_examples_seen)
 			writer.add_scalar('Train/Accuracy', acc, total_examples_seen)
 
 		mb_idx += 1
 	print_message('epoch:{}, av loss:{}'.format(ep_idx + 1, total_loss / (EPOCH_SIZE) ))
 #	model_state_dict = model.module.state_dict() if torch.cuda.device_count() > 1  else model.state_dict()
 	torch.save(model, MODEL_FILE.format(ep_idx + 1))
-
 	# TESTING
 	res_test = {}
 	original_scores = {}
+	if not args.eval:
+		continue
 	if ep_idx % test_every == 0:
 		model.eval()
 		for features in dataloader_test:

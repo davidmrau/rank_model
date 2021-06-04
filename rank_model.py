@@ -11,7 +11,7 @@ class RankModel(nn.Module):
 		super(RankModel, self).__init__()
 		
 		self.hidden_sizes = hidden_sizes
-		out_size = 2
+		out_size = 1
 		self.contextualizer = contextualizer
 		print( embedding, contextualizer)
 		if embedding is not None and contextualizer == 'average':
@@ -58,8 +58,7 @@ class RankModel(nn.Module):
 			self.layers.append( nn.Linear(in_features=hidden_sizes[-1], out_features=out_size))
 		else:
 			self.layers.append( nn.Linear(in_features=self.embedding_dim, out_features=out_size))
-		self.layers.append(nn.Tanh())
-		print(self)
+		self.layers.append(nn.Sigmoid())
 
 	def forward_average(self, encoded_query, encoded_doc, lengths_q, lengths_d):
 		# get embeddings of all inps

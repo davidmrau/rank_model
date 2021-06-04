@@ -27,8 +27,8 @@ class SparseBERT(nn.Module):
 		# conv padding not yet handled correctly
 		cat_hidden = last_hidden_state.view(-1, last_hidden_state.shape[1] * last_hidden_state.shape[2]).unsqueeze(1)
 		#print(cat_hidden.shape)
-		out = self.relu(cat_hidden)
-		out = self.conv(out)
+		out = self.conv(cat_hidden)
+		out = self.relu(out)
 		#print(out.shape)
 		#out = out.mean(2)
 

@@ -10,7 +10,7 @@ import random
 class DataReader(torch.utils.data.IterableDataset):
 		
 
-	def __init__(self, encoding, data_file, num_docs, multi_pass, id2q, id2d, MB_SIZE, token2id=None, max_length_query=None, max_length_doc=None, encoded=False, sample_random_docs=False, qrel_columns={'doc': 0, 'query': 2, 'score': 4}):
+	def __init__(self, model, data_file, num_docs, multi_pass, id2q, id2d, MB_SIZE, token2id=None, max_length_query=None, max_length_doc=None, encoded=False, sample_random_docs=False, qrel_columns={'doc': 0, 'query': 2, 'score': 4}, encoding=None):
 
 		self.num_docs = num_docs
 		self.doc_col = 2 if self.num_docs <= 1 else 1
@@ -19,24 +19,28 @@ class DataReader(torch.utils.data.IterableDataset):
 		self.id2d = id2d
 		self.doc_ids = list(id2d.file.keys())
 		self.encoded = encoded
+		self.encoding = encoding
 		self.reader = open(data_file, mode='r', encoding="utf-8")
 		self.reader.seek(0)
 		self.id2q = id2q
-		self.encoding = encoding
+		self.model = model
 		self.max_length_query = max_length_query
 		self.max_length_doc = max_length_doc
 		self.sample_random_docs = sample_random_docs
 		self.qrel_columns = qrel_columns
-		if 'bert' in encoding :
+		if 'bert' in model.lower():
 			if encoded:
 				self.tokenizer = BasicTokenizer(None)
 			else:
 				self.tokenizer = BertTokenizerFast.from_pretrained('bert-base-uncased')
 
-		elif encoding == 'glove':
-			self.tokenizer = BasicTokenizer(token2id)
+		elif model == 'rank':
+			if self.encoding == 'glove':
+				self.tokenizer = BasicTokenizer(token2id)
+			elif self.encoding == 'bert':
+				self.tokenizer = BertTokenizerFast.from_pretrained('bert-base-uncased')
 		else:
-			raise ValueError(f'{encoding}')
+			raise ValueError(f'{model}')
 	def sample_rand_doc(self):
 		rand = random.randint(0, len(self.doc_ids)-1)
 		doc_id = self.doc_ids[rand]
@@ -91,16 +95,25 @@ class DataReader(torch.utils.data.IterableDataset):
 
 			# TODO: change that tokenizer accepts tokenized text 
 			if not self.encoded:
-				if self.encoding =='bert' :
+				if self.model =='bert' :
 					features['encoded_input'] = [TensorDict(self.tokenizer(batch_queries, [bd[i] for bd in batch_docs], padding=True, truncation='only_second', 
-					return_tensors="pt")) for i in range(self.num_docs)]
-				elif self.encoding == 'glove':
+					return_tensors="pt",  max_length=512)) for i in range(self.num_docs)]
+
+				elif self.model == 'rank' and self.encoding == 'glove':
 					q_encoded, lengths_q = self.tokenizer(batch_queries, padding=True,  return_tensor=True, max_length=self.max_length_query, if_empty='<pad>')
 					for i in range(self.num_docs):
 						d_encoded, lengths_d = self.tokenizer([bd[i] for bd in batch_docs], padding=True, return_tensor=True, max_length=self.max_length_doc, if_empty='<pad>')
 						encoded_dict = TensorDict({'encoded_query': q_encoded, 'encoded_doc': d_encoded , 'lengths_q':  lengths_q, 'lengths_d': lengths_d})	
 						features['encoded_input'].append(encoded_dict)
-				elif self.encoding == 'sparse-bert' :
+				elif self.model == 'rank' and self.encoding == 'bert':
+					q_token = self.tokenizer(batch_queries, max_length=512, padding=True, return_tensors="pt", add_special_tokens=False)
+					d_lengths = (q_token.input_ids != 0).sum(1) 
+					for i in range(self.num_docs):
+						d_token = self.tokenizer([bd[i] for bd in batch_docs], padding=True, return_tensors="pt", max_length=512, add_special_tokens=False)
+						q_lengths = (d_token.input_ids != 0).sum(1) 
+						encoded_dict = TensorDict({'encoded_query': q_token.input_ids, 'encoded_doc': d_token.input_ids , 'lengths_q':  q_lengths, 'lengths_d': d_lengths})	
+						features['encoded_input'].append(encoded_dict)
+				elif self.model == 'sparseBERT' :
 					features['encoded_queries'] = TensorDict(self.tokenizer(batch_queries, padding=True, 
 					return_tensors="pt", max_length=self.max_length_doc))
 
@@ -109,14 +122,14 @@ class DataReader(torch.utils.data.IterableDataset):
 				else:
 					raise NotImplementedError()
 			else:
-				if self.encoding == 'bert':
+				if self.model == 'bert':
 					for i in range(self.num_docs):
 						input_ids, token_type_ids, attention_mask = self.tokenizer.wrap_batch_bert(batch_queries, [bd[i] for bd in batch_docs], padding=True, 
 						truncation='only_second', max_length_q=self.max_length_query, max_length_doc=self.max_length_doc, return_tensor=True, add_special_tokens=False)
 						encoded_dict = TensorDict({'input_ids': input_ids, 'token_type_ids': token_type_ids, 'attention_mask': attention_mask})
 						features['encoded_input'].append(encoded_dict) 
 
-				elif self.encoding == 'glove':
+				elif self.model == 'rank':
 					q_encoded, lengths_q = self.tokenizer.wrap_batch(batch_queries, padding=True,  return_tensor=True, max_length=self.max_length_query, if_empty='<pad>')
 					for i in range(self.num_docs):
 						d_encoded, lengths_d = self.tokenizer.wrap_batch([bd[i] for bd in batch_docs],  return_tensor=True, padding=True, max_length=self.max_length_doc, if_empty='<pad>')
