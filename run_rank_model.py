@@ -1,7 +1,8 @@
 import warnings
 warnings.filterwarnings('ignore',category=FutureWarning)
 
-
+import json
+import os
 import os.path
 import datetime
 import numpy as np
@@ -28,12 +29,13 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--encoding", type=str, default='bert')
 parser.add_argument("--add_to_dir", type=str, default='')
 parser.add_argument("--model", type=str, default='rank')
+parser.add_argument("--aggregation", type=str, default='average')
 parser.add_argument("--mb_size", type=int, default=256)
 parser.add_argument("--epoch_size", type=int, default=256)
 parser.add_argument("--sparse_dim", type=int, default=1000)
 parser.add_argument("--bert_layers", type=str, default=None)
 parser.add_argument("--lr", type=float, default=0.00001)
-parser.add_argument("--dropout", type=float, default=0.0)
+parser.add_argument("--dropout", type=float, default=0.2)
 parser.add_argument("--l1_scalar", type=float, default=0.00001)
 parser.add_argument("--encoded", action='store_true')
 parser.add_argument("--single_gpu", action='store_true')
@@ -71,8 +73,12 @@ bert_layers = '' if args.bert_layers == None  else f'_bert_layers_{args.bert_lay
 
 experiments_path = f'experiments_{args.model}_model/'
 
-MODEL_DIR = f'{experiments_path}experiments_{args.dataset}/model_bz_{args.mb_size}_lr_{args.lr}_do_{args.dropout}_sr_{sample_random_docs}_sd_{args.sparse_dim}_l1_{str(args.l1_scalar).replace(".", "_")}'
+MODEL_DIR = f'{experiments_path}experiments_{args.dataset}/model_bz_{args.mb_size}_lr_{args.lr}_do_{args.dropout}_sr_{sample_random_docs}_sd_{args.sparse_dim}_l1_{str(args.l1_scalar).replace(".", "_")}_{args.aggregation}'
 MODEL_DIR += args.add_to_dir
+os.makedirs(MODEL_DIR, exist_ok=True)
+with open(f'{MODEL_DIR}/config.txt', 'w') as f:
+    json.dump(args.__dict__, f, indent=2)
+
 
 
 # other data paths

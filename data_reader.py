@@ -97,7 +97,7 @@ class DataReader(torch.utils.data.IterableDataset):
 			if not self.encoded:
 				if self.model =='bert' :
 					features['encoded_input'] = [TensorDict(self.tokenizer(batch_queries, [bd[i] for bd in batch_docs], padding=True, truncation='only_second', 
-					return_tensors="pt",  max_length=512)) for i in range(self.num_docs)]
+					return_tensors="pt",  max_length=self.max_length_doc)) for i in range(self.num_docs)]
 
 				elif self.model == 'rank' and self.encoding == 'glove':
 					q_encoded, lengths_q = self.tokenizer(batch_queries, padding=True,  return_tensor=True, max_length=self.max_length_query, if_empty='<pad>')
@@ -106,10 +106,10 @@ class DataReader(torch.utils.data.IterableDataset):
 						encoded_dict = TensorDict({'encoded_query': q_encoded, 'encoded_doc': d_encoded , 'lengths_q':  lengths_q, 'lengths_d': lengths_d})	
 						features['encoded_input'].append(encoded_dict)
 				elif self.model == 'rank' and self.encoding == 'bert':
-					q_token = self.tokenizer(batch_queries, max_length=512, padding=True, return_tensors="pt", add_special_tokens=False)
+					q_token = self.tokenizer(batch_queries, max_length=self.max_length_doc, padding=True, return_tensors="pt", add_special_tokens=False)
 					d_lengths = (q_token.input_ids != 0).sum(1) 
 					for i in range(self.num_docs):
-						d_token = self.tokenizer([bd[i] for bd in batch_docs], padding=True, return_tensors="pt", max_length=512, add_special_tokens=False)
+						d_token = self.tokenizer([bd[i] for bd in batch_docs], padding=True, return_tensors="pt", max_length=self.max_length_doc, add_special_tokens=False)
 						q_lengths = (d_token.input_ids != 0).sum(1) 
 						encoded_dict = TensorDict({'encoded_query': q_token.input_ids, 'encoded_doc': d_token.input_ids , 'lengths_q':  q_lengths, 'lengths_d': d_lengths})	
 						features['encoded_input'].append(encoded_dict)
@@ -118,7 +118,7 @@ class DataReader(torch.utils.data.IterableDataset):
 					return_tensors="pt", max_length=self.max_length_doc))
 
 					features['encoded_docs'] = [TensorDict(self.tokenizer([bd[i] for bd in batch_docs], padding=True, 
-					return_tensors="pt")) for i in range(self.num_docs)]
+					return_tensors="pt", max_length=self.max_length_doc)) for i in range(self.num_docs)]
 				else:
 					raise NotImplementedError()
 			else:
