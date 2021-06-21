@@ -16,37 +16,38 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 
 from file_interface import File
-from metrics import MAPTrec
+from metrics import Trec
 from rank_model import RankModel
-from sparse_bert import SparseBERT
+from sparse_bert_ import SparseBERT
 from utils import load_glove_embedding, load_bert_embedding, load_rand_embedding
 from data_reader import DataReader
 import argparse
-
 #import csv
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--encoding", type=str, default='bert')
 parser.add_argument("--add_to_dir", type=str, default='')
+parser.add_argument("--checkpoint", type=str, default=None)
 parser.add_argument("--model", type=str, default='rank')
 parser.add_argument("--aggregation", type=str, default='average')
 parser.add_argument("--mb_size", type=int, default=256)
 parser.add_argument("--epoch_size", type=int, default=256)
 parser.add_argument("--sparse_dim", type=int, default=1000)
+parser.add_argument("--continue_line", type=int, default=None)
 parser.add_argument("--bert_layers", type=str, default=None)
 parser.add_argument("--lr", type=float, default=0.00001)
 parser.add_argument("--dropout", type=float, default=0.2)
 parser.add_argument("--l1_scalar", type=float, default=0.00001)
+parser.add_argument("--lamb", type=float, default=0)
 parser.add_argument("--encoded", action='store_true')
 parser.add_argument("--single_gpu", action='store_true')
 parser.add_argument("--sample_random_docs", action='store_true')
 parser.add_argument("--freeze_bert", action='store_true')
-parser.add_argument("--freeze_embeddings", action='store_true')
-parser.add_argument("--random_embeddings", action='store_true')
 parser.add_argument("--eval", action='store_true')
+parser.add_argument("--delete", action='store_true')
 parser.add_argument("--dataset", type=str, required=True)
 parser.add_argument("--compositionality_weights", type=str, default='uniform')
-parser.add_argument('--hidden_dim', type=str, default='512-512')
+parser.add_argument("--activation", type=str, default='relu')
 args = parser.parse_args()
 print(args)
 
@@ -64,16 +65,17 @@ test_every = 1
 #log_every = EPOCH_SIZE // 8 if EPOCH_SIZE > 8 else EPOCH_SIZE
 log_every = 1
 
+eval_metric = 'ndcg_cut_10'
+max_rank = 10
+
 sample_random_docs = '' if not args.sample_random_docs else '_sample_random_docs_'
-freeze_embeddings = '' if not args.freeze_embeddings else '_fr_emb_'
-random_embeddings = '' if not args.random_embeddings else '_rand_emb_'
 encoded = '' if not args.encoded else '_encoded_'
 bert_layers = '' if args.bert_layers == None  else f'_bert_layers_{args.bert_layers}_'
+lamb  = '' if args.lamb == 0 else f'_{args.lamb}_'
 
+experiments_path = f'/project/draugpu/experiments_{args.model}_model/'
 
-experiments_path = f'experiments_{args.model}_model/'
-
-MODEL_DIR = f'{experiments_path}experiments_{args.dataset}/model_bz_{args.mb_size}_lr_{args.lr}_do_{args.dropout}_sr_{sample_random_docs}_sd_{args.sparse_dim}_l1_{str(args.l1_scalar).replace(".", "_")}_{args.aggregation}'
+MODEL_DIR = f'{experiments_path}experiments_{args.dataset}/model_bz_{args.mb_size}_lr_{args.lr}_do_{args.dropout}_sr_{sample_random_docs}_sd_{args.sparse_dim}_l1_{str(args.l1_scalar).replace(".", "_")}_{args.aggregation}_{args.activation}{lamb}'
 MODEL_DIR += args.add_to_dir
 os.makedirs(MODEL_DIR, exist_ok=True)
 with open(f'{MODEL_DIR}/config.txt', 'w') as f:
@@ -186,19 +188,22 @@ id2d = File(ID2DOC, encoded=args.encoded)
 MODEL_FILE = os.path.join(MODEL_DIR, "rank_model.ep{}.pth")
 
 print(f'Saving model to {MODEL_DIR}')
-if os.path.exists(f'{MODEL_DIR}/log/'):
-		user_inp = input(f"Type 'y' to delete folder: {MODEL_DIR}")
-		if user_inp == 'y':
-			shutil.rmtree(f'{MODEL_DIR}/log/')
-		else:
-			exit()
+#if os.path.exists(f'{MODEL_DIR}/'):
+#	if args.delete:
+#		shutil.rmtree(f'{MODEL_DIR}/')
+#	else:
+#		user_inp = input(f"Type 'y' to delete folder: {MODEL_DIR}")
+#		if user_inp == 'y':
+#			shutil.rmtree(f'{MODEL_DIR}/')
+#		else:
+#			exit()
 
 writer = SummaryWriter(f'{MODEL_DIR}/log/')
 # instantiate Data Reader
-dataset_test = DataReader(args.model, DATA_FILE_TEST, 1, False, id2q_test, id2d, MB_SIZE, max_length_doc=MAX_DOC_TERMS, max_length_query=MAX_QUERY_TERMS, token2id=token2id, encoded=encoded, sample_random_docs=args.sample_random_docs, encoding=args.encoding)
-dataset_train = DataReader(args.model, DATA_FILE_TRAIN, 2, True, id2q_train, id2d, MB_SIZE, max_length_doc=MAX_DOC_TERMS, max_length_query=MAX_QUERY_TERMS, token2id=token2id, encoded=encoded, sample_random_docs=args.sample_random_docs, encoding=args.encoding)
-dataloader_test = DataLoader(dataset_test, batch_size=None, num_workers=1, pin_memory=True, collate_fn=dataset_test.collate_fn)
-dataloader_train = DataLoader(dataset_train, batch_size=None, num_workers=1, pin_memory=True, collate_fn=dataset_train.collate_fn)
+dataset_test = DataReader(args.model, DATA_FILE_TEST, 1, False, id2q_test, id2d, MB_SIZE, max_length_doc=MAX_DOC_TERMS, max_length_query=MAX_QUERY_TERMS, token2id=token2id, encoded=encoded, sample_random_docs=False, encoding=args.encoding)
+dataset_train = DataReader(args.model, DATA_FILE_TRAIN, 2, True, id2q_train, id2d, MB_SIZE, max_length_doc=MAX_DOC_TERMS, max_length_query=MAX_QUERY_TERMS, token2id=token2id, encoded=encoded, sample_random_docs=args.sample_random_docs, encoding=args.encoding, continue_line=args.continue_line)
+dataloader_test = DataLoader(dataset_test, batch_size=None, num_workers=1, pin_memory=False, collate_fn=dataset_test.collate_fn)
+dataloader_train = DataLoader(dataset_train, batch_size=None, num_workers=1, pin_memory=False, collate_fn=dataset_train.collate_fn)
 if args.encoding == 'glove' and args.random_embeddings:
 	embedding = load_rand_embedding(64000, 300)
 	contextualizer = 'average'
@@ -215,13 +220,16 @@ else:
 
 # instanitae model
 
+
 if args.model == 'rank':
 	model = RankModel([ int(h) for h in args.hidden_dim.split('-')], args.dropout, compostionality_weights, freeze_embeddings=args.freeze_embeddings, bert_layers=args.bert_layers, embedding=embedding, contextualizer=contextualizer)
 	criterion = nn.CrossEntropyLoss()
 elif args.model == 'sparseBERT':
 	criterion = nn.MarginRankingLoss(margin=1)
-	model = SparseBERT(args.sparse_dim, args.dropout, args.freeze_bert)
+	model = SparseBERT(args.sparse_dim, args.dropout, args.freeze_bert, activation=args.activation, aggregation=args.aggregation, lamb=args.lamb)
 
+if args.checkpoint:
+	model = torch.load(args.checkpoint)
 
 def print_message(s):
 	print("[{}] {}".format(datetime.datetime.utcnow().strftime("%b %d, %H:%M:%S"), s), flush=True)
@@ -229,7 +237,7 @@ def print_message(s):
 
 print_message('Starting')
 
-if torch.cuda.device_count() > 1 and not args.single_gpu:
+if torch.cuda.device_count() > 1 and not args.single_gpu and not isinstance(model, nn.DataParallel):
 	model = torch.nn.DataParallel(model, device_ids=list(range(torch.cuda.device_count())))
 print(model)
 if torch.cuda.is_available():
@@ -239,6 +247,8 @@ else:
 
 model = model.to(DEVICE)
 optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=LEARNING_RATE, weight_decay=0.0001)
+
+#loss_scheduler = LossScheduler(init=-1000)
 
 
 #qrels = {}
@@ -294,26 +304,31 @@ for ep_idx in range(NUM_EPOCHS):
 			#l1_loss = torch.norm(torch.cat([out_queries, out_docs_pos, out_docs_neg], 0), 1) /3 * args.l1_scalar		
 			l1_loss = torch.cat([out_docs_pos, out_docs_neg, out_queries], 1).abs().sum(1).mean() * args.l1_scalar
 			l0_loss = (torch.cat([out_docs_pos, out_docs_neg, out_queries], 1) == 0).float().mean(1).mean(0)
+			l0_query = (out_queries == 0).float().mean(1).mean(0)
+			l0_docs = (torch.cat([out_docs_pos, out_docs_neg], 1) == 0).float().mean(1).mean(0)
 			train_loss = criterion(out_pos, out_neg, features['labels'].to(DEVICE))
 			loss = train_loss + l1_loss 
 			total_examples_seen += out_pos.shape[0]
 
-		total_loss += loss
+		total_loss += loss.item()
 		optimizer.zero_grad()
 		loss.backward()
 		optimizer.step()
 		if mb_idx % log_every == 0:
 			print(f'MB {mb_idx + 1}/{EPOCH_SIZE}')
 			print_message('examples:{}, train_loss:{}, l1_loss: {}, l0_loss: {},  acc:{}'.format(total_examples_seen, train_loss, l1_loss, l0_loss,  acc))
-			writer.add_scalar('Loss/Train', train_loss, total_examples_seen)
-			writer.add_scalar('Loss/L0', l0_loss, total_examples_seen)
-			writer.add_scalar('Loss/Total', loss, total_examples_seen)
-			writer.add_scalar('Loss/L1', l1_loss, total_examples_seen)
+			writer.add_scalar('Train/Train Loss', train_loss, total_examples_seen)
+			writer.add_scalar('Train/L0 Loss', l0_loss, total_examples_seen)
+			writer.add_scalar('Train/L0_query', l0_query, total_examples_seen)
+			writer.add_scalar('Train/L0_docs', l0_docs, total_examples_seen)
+			writer.add_scalar('Train/Total Loss', loss, total_examples_seen)
+			writer.add_scalar('Train/L1 Loss', l1_loss, total_examples_seen)
 			writer.add_scalar('Train/Accuracy', acc, total_examples_seen)
-
 		mb_idx += 1
+		#mb_idx = EPOCH_SIZE
 	print_message('epoch:{}, av loss:{}'.format(ep_idx + 1, total_loss / (EPOCH_SIZE) ))
 #	model_state_dict = model.module.state_dict() if torch.cuda.device_count() > 1  else model.state_dict()
+	print('saving_model')
 	torch.save(model, MODEL_FILE.format(ep_idx + 1))
 	# TESTING
 	res_test = {}
@@ -332,6 +347,10 @@ for ep_idx in range(NUM_EPOCHS):
 				out_queries = model(**features['encoded_queries'].to(DEVICE))
 				out_docs = model(**features['encoded_docs'][0].to(DEVICE)) 
 				out = torch.bmm(out_queries.unsqueeze(1), out_docs.unsqueeze(-1)).squeeze()
+				l0_query = (out_queries == 0).float().mean(1).mean(0)
+				l0_docs = (out_docs == 0).float().mean(1).mean(0)
+				writer.add_scalar('Test/L0_query', l0_query, total_examples_seen)
+				writer.add_scalar('Test/L0_docs', l0_docs, total_examples_seen)
 			out = out.data.cpu()
 			batch_num_examples = len(features['meta'])
 			
@@ -351,7 +370,6 @@ for ep_idx in range(NUM_EPOCHS):
 				#res_test[q][d] += out[i][0].detach().numpy()
 				res_test[q][d] += out[i].detach().numpy()
 			# if number of examples < batch size we are done
-
 		sorted_scores = []
 		#sorted_scores_original = []
 		q_ids = []
@@ -375,15 +393,15 @@ for ep_idx in range(NUM_EPOCHS):
 
 
 		# RUN TREC_EVAL
-		test = MAPTrec('trec_eval', QRELS_TEST, 1000, ranking_file_path=f'{MODEL_DIR}/model_{ep_idx+1}_ranking')
+		test = Trec(eval_metric, 'trec_eval', QRELS_TEST, max_rank, ranking_file_path=f'{MODEL_DIR}/model_{ep_idx+1}_ranking')
 
 		# sanity check original model
 		#map_1000_original = test.score(sorted_scores_original, q_ids)
 		#print_message('original ranking model:{}, map@1000:{}'.format(ep_idx + 1, map_1000_original))
 
-		map_1000 = test.score(sorted_scores, q_ids)
-		print_message('model:{}, map@1000:{}'.format(ep_idx + 1, map_1000))
-		writer.add_scalar('Test/map@1000', map_1000, total_examples_seen)
+		eval_val = test.score(sorted_scores, q_ids)
+		print_message('model:{}, {}@{}:{}'.format(ep_idx + 1, eval_metric, max_rank, eval_val))
+		writer.add_scalar('Test/{eval_metric}@{max_rank}', eval_val, total_examples_seen)
 
 
 

@@ -10,7 +10,7 @@ import random
 class DataReader(torch.utils.data.IterableDataset):
 		
 
-	def __init__(self, model, data_file, num_docs, multi_pass, id2q, id2d, MB_SIZE, token2id=None, max_length_query=None, max_length_doc=None, encoded=False, sample_random_docs=False, qrel_columns={'doc': 0, 'query': 2, 'score': 4}, encoding=None):
+	def __init__(self, model, data_file, num_docs, multi_pass, id2q, id2d, MB_SIZE, token2id=None, max_length_query=None, max_length_doc=None, encoded=False, sample_random_docs=False, qrel_columns={'doc': 0, 'query': 2, 'score': 4}, encoding=None, continue_line=None):
 
 		self.num_docs = num_docs
 		self.doc_col = 2 if self.num_docs <= 1 else 1
@@ -21,8 +21,18 @@ class DataReader(torch.utils.data.IterableDataset):
 		self.encoded = encoded
 		self.encoding = encoding
 		self.reader = open(data_file, mode='r', encoding="utf-8")
+
+		# go to line "continue line"
+		print(f'continuing line {continue_line}')
+		if continue_line:
+			for i, line in enumerate(self.reader):
+				if i == continue_line:
+					break
+
 		self.reader.seek(0)
 		self.id2q = id2q
+		print(len(id2q))
+		print(len(id2d))
 		self.model = model
 		self.max_length_query = max_length_query
 		self.max_length_doc = max_length_doc
@@ -68,7 +78,6 @@ class DataReader(torch.utils.data.IterableDataset):
 						self.reader.seek(0)
 						return
 				cols = row.split()
-
 				q = self.id2q[cols[0]]
 				# get doc_ids	
 				ds_ids = [cols[self.doc_col + i].strip() for i in range(self.num_docs)]
@@ -142,5 +151,6 @@ class DataReader(torch.utils.data.IterableDataset):
 			#print(f'get_batch time: {time.time() - t_start}.')
 					
 			yield features
+
 	def collate_fn(self, batch):
 		return batch

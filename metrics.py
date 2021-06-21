@@ -46,16 +46,11 @@ class TrecEval(object):
 
 
 		# overview trec_eval
-		output = subprocess.check_output(f"./{self.path} {add_params} {qrel_path} {ranking_path} -M {max_rank}", shell=True).decode(sys.stdout.encoding)
+		output = subprocess.check_output(f"./{self.path} {add_params} {qrel_path} {ranking_path} -M {max_rank} -m all_trec", shell=True).decode(sys.stdout.encoding)
 
 		with open(self.ranking_path + '.scores.trec', 'w') as f:
 			f.write(output)
-
-		print(output)
-		output = output.replace('\t', ' ').split('\n')
-		for line in output:
-			if line.startswith('map'):
-				return float(line.split()[2])
+		return output
 
 class Metric(object):
 
@@ -76,12 +71,13 @@ class Metric(object):
 		raise NotImplementedError()
 
 
-class MAPTrec(Metric):
-	def __init__(self, trec_eval_path, qrel_file, max_rank, add_params='', ranking_file_path=None):
+class Trec(Metric):
+	def __init__(self, metric, trec_eval_path, qrel_file, max_rank, add_params='', ranking_file_path=None):
 		super().__init__(max_rank, qrel_file, ranking_file_path)
-		self.name = f'MAP@{max_rank}'
+		self.name = f'{metric}@{max_rank}'
 		self.add_params = add_params
 		self.trec_eval = TrecEval(trec_eval_path)
+		self.metric = metric
 
 	def write_scores(self, scores, qids, path):
 		write_ranking(scores, qids, f'{path}.tsv')
@@ -94,5 +90,9 @@ class MAPTrec(Metric):
 			path = self.ranking_file_path
 
 		self.write_scores(scores, qids, path)
-		metric = self.trec_eval.score(self.qrel_file, f'{path}.trec', self.max_rank, self.add_params)
-		return round(metric, 6)
+		output = self.trec_eval.score(self.qrel_file, f'{path}.trec', self.max_rank, self.add_params)
+
+		output = output.replace('\t', ' ').split('\n')
+		for line in output:
+			if line.startswith(self.metric):
+				return round(float(line.split()[2]), 6)
