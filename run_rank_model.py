@@ -185,7 +185,7 @@ id2q_train = File(ID2Q_TRAIN, encoded=args.encoded)
 id2d = File(ID2DOC, encoded=args.encoded)
 
 
-MODEL_FILE = os.path.join(MODEL_DIR, "rank_model.ep{}.pth")
+MODEL_FILE = os.path.join(MODEL_DIR, "model.ep{}.pth")
 
 print(f'Saving model to {MODEL_DIR}')
 #if os.path.exists(f'{MODEL_DIR}/'):
@@ -200,8 +200,8 @@ print(f'Saving model to {MODEL_DIR}')
 
 writer = SummaryWriter(f'{MODEL_DIR}/log/')
 # instantiate Data Reader
-dataset_test = DataReader(args.model, DATA_FILE_TEST, 1, False, id2q_test, id2d, MB_SIZE, max_length_doc=MAX_DOC_TERMS, max_length_query=MAX_QUERY_TERMS, token2id=token2id, encoded=encoded, sample_random_docs=False, encoding=args.encoding)
-dataset_train = DataReader(args.model, DATA_FILE_TRAIN, 2, True, id2q_train, id2d, MB_SIZE, max_length_doc=MAX_DOC_TERMS, max_length_query=MAX_QUERY_TERMS, token2id=token2id, encoded=encoded, sample_random_docs=args.sample_random_docs, encoding=args.encoding, continue_line=args.continue_line)
+dataset_test = DataReader(args.model, DATA_FILE_TEST, 1, False, id2q_test, id2d, MB_SIZE, max_length_doc=MAX_QUERY_TERMS, max_length_query=MAX_DOC_TERMS, token2id=token2id, encoded=encoded, sample_random_docs=False, encoding=args.encoding)
+dataset_train = DataReader(args.model, DATA_FILE_TRAIN, 2, True, id2q_train, id2d, MB_SIZE, max_length_doc=MAX_QUERY_TERMS, max_length_query=MAX_DOC_TERMS, token2id=token2id, encoded=encoded, sample_random_docs=args.sample_random_docs, encoding=args.encoding, continue_line=args.continue_line)
 dataloader_test = DataLoader(dataset_test, batch_size=None, num_workers=1, pin_memory=False, collate_fn=dataset_test.collate_fn)
 dataloader_train = DataLoader(dataset_train, batch_size=None, num_workers=1, pin_memory=False, collate_fn=dataset_train.collate_fn)
 if args.encoding == 'glove' and args.random_embeddings:
@@ -294,6 +294,17 @@ for ep_idx in range(NUM_EPOCHS):
 			#train_loss = criterion(out[0], out[1], features['labels'].to(DEVICE))
 			#total_examples_seen += out[0].shape[0]
 			#acc = np.array(((out[0] > out[1]).int()).float().cpu().mean())
+		elif args.model == 'bert':
+			out = tuple([model(**features['encoded_input'][i].to(DEVICE)) for i in range(dataset_train.num_docs)])
+			out = torch.cat(out, 1)
+			loss = criterion(out, features['labels'].long().to(DEVICE) * 0)
+			train_loss = loss
+			total_examples_seen += out.shape[0]
+			acc = np.array(((out[:, 0] > out[:,1]).int()).float().cpu().mean())
+			# margin ranking loss 
+			#train_loss = criterion(out[0], out[1], features['labels'].to(DEVICE))
+			#total_examples_seen += out[0].shape[0]
+			#acc = np.array(((out[0] > out[1]).int()).float().cpu().mean())
 		elif args.model == 'sparseBERT':
 			out_queries = model(**features['encoded_queries'].to(DEVICE))
 			out_docs_pos = model(**features['encoded_docs'][0].to(DEVICE)) 
@@ -341,7 +352,9 @@ for ep_idx in range(NUM_EPOCHS):
 			if args.model == 'rank':
 				# forward doc
 				out = model(features['encoded_input'][0].to(DEVICE))
-				# to cpu
+			if args.model == 'bert':
+				# forward doc
+				out = model(**features['encoded_input'][0].to(DEVICE))
 			elif args.model == 'sparseBERT':
 
 				out_queries = model(**features['encoded_queries'].to(DEVICE))
