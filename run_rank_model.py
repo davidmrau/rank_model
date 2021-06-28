@@ -18,7 +18,8 @@ from torch.utils.data import DataLoader
 from file_interface import File
 from metrics import Trec
 from rank_model import RankModel
-from sparse_bert_ import SparseBERT
+from sparse_bert import SparseBERT
+from bert import BERT
 from utils import load_glove_embedding, load_bert_embedding, load_rand_embedding
 from data_reader import DataReader
 import argparse
@@ -30,8 +31,10 @@ parser.add_argument("--add_to_dir", type=str, default='')
 parser.add_argument("--checkpoint", type=str, default=None)
 parser.add_argument("--model", type=str, default='rank')
 parser.add_argument("--aggregation", type=str, default='average')
-parser.add_argument("--mb_size", type=int, default=256)
+parser.add_argument("--mb_size_train", type=int, default=64)
+parser.add_argument("--mb_size_test", type=int, default=256)
 parser.add_argument("--epoch_size", type=int, default=256)
+parser.add_argument("--hidden_dim", type=str, default='128-128')
 parser.add_argument("--sparse_dim", type=int, default=1000)
 parser.add_argument("--continue_line", type=int, default=None)
 parser.add_argument("--bert_layers", type=str, default=None)
@@ -43,6 +46,8 @@ parser.add_argument("--encoded", action='store_true')
 parser.add_argument("--single_gpu", action='store_true')
 parser.add_argument("--sample_random_docs", action='store_true')
 parser.add_argument("--freeze_bert", action='store_true')
+parser.add_argument("--freeze_embeddings", action='store_true')
+parser.add_argument("--train_idf", action='store_true')
 parser.add_argument("--eval", action='store_true')
 parser.add_argument("--delete", action='store_true')
 parser.add_argument("--dataset", type=str, required=True)
@@ -55,16 +60,13 @@ print(args)
 encoded=args.encoded
 
 
-MAX_QUERY_TERMS = None
+MAX_QUERY_TERMS = 64
 MAX_DOC_TERMS = 512
-MB_SIZE = args.mb_size
 EPOCH_SIZE = args.epoch_size
 NUM_EPOCHS = 40
 LEARNING_RATE = args.lr
 test_every = 1
-#log_every = EPOCH_SIZE // 8 if EPOCH_SIZE > 8 else EPOCH_SIZE
-log_every = 1
-
+log_every =  1
 eval_metric = 'ndcg_cut_10'
 max_rank = 10
 
@@ -75,7 +77,16 @@ lamb  = '' if args.lamb == 0 else f'_{args.lamb}_'
 
 experiments_path = f'/project/draugpu/experiments_{args.model}_model/'
 
-MODEL_DIR = f'{experiments_path}experiments_{args.dataset}/model_bz_{args.mb_size}_lr_{args.lr}_do_{args.dropout}_sr_{sample_random_docs}_sd_{args.sparse_dim}_l1_{str(args.l1_scalar).replace(".", "_")}_{args.aggregation}_{args.activation}{lamb}'
+
+if args.model == 'sparseBERT':
+	MODEL_DIR = f'{experiments_path}experiments_{args.dataset}/model_bz_{args.mb_size_train}_lr_{args.lr}_do_{args.dropout}_sr_{sample_random_docs}_sd_{args.sparse_dim}_l1_{str(args.l1_scalar).replace(".", "_")}_{args.aggregation}_{args.activation}{lamb}'
+elif args.model == 'bert':
+	MODEL_DIR = f'{experiments_path}experiments_{args.dataset}/model_bz_{args.mb_size_train}_lr_{args.lr}_do_{args.dropout}_sr_{sample_random_docs}_{args.aggregation}'
+elif args.model == 'rank':
+
+	MODEL_DIR = f'{experiments_path}experiments_{args.dataset}/model_bz_{args.mb_size_train}_lr_{args.lr}_comp_{args.compositionality_weights}_sr_{sample_random_docs}'
+
+
 MODEL_DIR += args.add_to_dir
 os.makedirs(MODEL_DIR, exist_ok=True)
 with open(f'{MODEL_DIR}/config.txt', 'w') as f:
@@ -85,7 +96,9 @@ with open(f'{MODEL_DIR}/config.txt', 'w') as f:
 
 # other data paths
 DATA_EMBEDDINGS = "data/embeddings/glove.6B.300d.txt"
-DATA_FILE_IDFS = "data/embeddings/idfnew.norm.tsv"
+
+IDF = pickle.load(open("data/msmarco/idf_norm_msmarco.p", 'rb'))
+
 TOKEN2ID_PATH = "data/robust/robust04_word_frequency.tsv_64000_t2i.p"
 #TOKEN2ID_PATH = "data/robust/robust04_word_frequency.tsv_400000_t2i.p"
 #TOKEN2ID_PATH = 'data/msmarco/collection.tsv.ascii_vocab_count_64000_t2i.p'
@@ -200,8 +213,8 @@ print(f'Saving model to {MODEL_DIR}')
 
 writer = SummaryWriter(f'{MODEL_DIR}/log/')
 # instantiate Data Reader
-dataset_test = DataReader(args.model, DATA_FILE_TEST, 1, False, id2q_test, id2d, MB_SIZE, max_length_doc=MAX_QUERY_TERMS, max_length_query=MAX_DOC_TERMS, token2id=token2id, encoded=encoded, sample_random_docs=False, encoding=args.encoding)
-dataset_train = DataReader(args.model, DATA_FILE_TRAIN, 2, True, id2q_train, id2d, MB_SIZE, max_length_doc=MAX_QUERY_TERMS, max_length_query=MAX_DOC_TERMS, token2id=token2id, encoded=encoded, sample_random_docs=args.sample_random_docs, encoding=args.encoding, continue_line=args.continue_line)
+dataset_test = DataReader(args.model, DATA_FILE_TEST, 1, False, id2q_test, id2d, args.mb_size_test, max_length_doc=MAX_DOC_TERMS, max_length_query=MAX_QUERY_TERMS, token2id=token2id, encoded=encoded, sample_random_docs=False, encoding=args.encoding)
+dataset_train = DataReader(args.model, DATA_FILE_TRAIN, 2, True, id2q_train, id2d, args.mb_size_train, max_length_doc=MAX_DOC_TERMS, max_length_query=MAX_QUERY_TERMS, token2id=token2id, encoded=encoded, sample_random_docs=args.sample_random_docs, encoding=args.encoding, continue_line=args.continue_line)
 dataloader_test = DataLoader(dataset_test, batch_size=None, num_workers=1, pin_memory=False, collate_fn=dataset_test.collate_fn)
 dataloader_train = DataLoader(dataset_train, batch_size=None, num_workers=1, pin_memory=False, collate_fn=dataset_train.collate_fn)
 if args.encoding == 'glove' and args.random_embeddings:
@@ -227,7 +240,10 @@ if args.model == 'rank':
 elif args.model == 'sparseBERT':
 	criterion = nn.MarginRankingLoss(margin=1)
 	model = SparseBERT(args.sparse_dim, args.dropout, args.freeze_bert, activation=args.activation, aggregation=args.aggregation, lamb=args.lamb)
-
+elif args.model == 'bert':
+	criterion = nn.CrossEntropyLoss()
+	model = BERT(IDF, args.dropout, args.freeze_bert, train_idf=args.train_idf)
+	print('Loading bert from scratch')
 if args.checkpoint:
 	model = torch.load(args.checkpoint)
 
@@ -273,10 +289,12 @@ for ep_idx in range(NUM_EPOCHS):
 	model.train()
 	total_loss = 0.0
 	mb_idx = 0
-	while mb_idx + 1 <   EPOCH_SIZE:
+	while mb_idx  <   EPOCH_SIZE:
 		# get train data
 		l0_loss = 0
 		l1_loss = 0
+		l0_query = 0 
+		l0_docs = 0
 		loss = 0 
 		try:
 			features = next(batch_iterator)
@@ -286,8 +304,8 @@ for ep_idx in range(NUM_EPOCHS):
 		if args.model == 'rank':
 			out = tuple([model(features['encoded_input'][i].to(DEVICE)) for i in range(dataset_train.num_docs)])
 			out = torch.cat(out, 1)
-			loss = criterion(out, features['labels'].long().to(DEVICE) * 0)
-			train_loss = loss
+			train_loss = criterion(out, features['labels'].long().to(DEVICE)*0)
+			loss = train_loss
 			total_examples_seen += out.shape[0]
 			acc = np.array(((out[:, 0] > out[:,1]).int()).float().cpu().mean())
 			# margin ranking loss 
@@ -297,8 +315,11 @@ for ep_idx in range(NUM_EPOCHS):
 		elif args.model == 'bert':
 			out = tuple([model(**features['encoded_input'][i].to(DEVICE)) for i in range(dataset_train.num_docs)])
 			out = torch.cat(out, 1)
-			loss = criterion(out, features['labels'].long().to(DEVICE) * 0)
-			train_loss = loss
+			print(criterion)
+			print(out)
+			print(features['labels'].long().to(DEVICE) * 0)
+			train_loss = criterion(out, features['labels'].long().to(DEVICE)*0)
+			loss = train_loss
 			total_examples_seen += out.shape[0]
 			acc = np.array(((out[:, 0] > out[:,1]).int()).float().cpu().mean())
 			# margin ranking loss 
@@ -314,9 +335,9 @@ for ep_idx in range(NUM_EPOCHS):
 			acc = np.array(((out_pos > out_neg).int()).float().cpu().mean())
 			#l1_loss = torch.norm(torch.cat([out_queries, out_docs_pos, out_docs_neg], 0), 1) /3 * args.l1_scalar		
 			l1_loss = torch.cat([out_docs_pos, out_docs_neg, out_queries], 1).abs().sum(1).mean() * args.l1_scalar
-			l0_loss = (torch.cat([out_docs_pos, out_docs_neg, out_queries], 1) == 0).float().mean(1).mean(0)
-			l0_query = (out_queries == 0).float().mean(1).mean(0)
-			l0_docs = (torch.cat([out_docs_pos, out_docs_neg], 1) == 0).float().mean(1).mean(0)
+			l0_loss = (torch.cat([out_docs_pos, out_docs_neg, out_queries], 1) == 0).float().mean(1).mean(0).item()
+			l0_query = (out_queries == 0).float().mean(1).mean(0).item()
+			l0_docs = (torch.cat([out_docs_pos, out_docs_neg], 1) == 0).float().mean(1).mean(0).item()
 			train_loss = criterion(out_pos, out_neg, features['labels'].to(DEVICE))
 			loss = train_loss + l1_loss 
 			total_examples_seen += out_pos.shape[0]
@@ -346,57 +367,58 @@ for ep_idx in range(NUM_EPOCHS):
 	original_scores = {}
 	if not args.eval:
 		continue
-	if ep_idx % test_every == 0:
-		model.eval()
-		for features in dataloader_test:
-			if args.model == 'rank':
-				# forward doc
-				out = model(features['encoded_input'][0].to(DEVICE))
-			if args.model == 'bert':
-				# forward doc
-				out = model(**features['encoded_input'][0].to(DEVICE))
-			elif args.model == 'sparseBERT':
+	with torch.no_grad():
+		if ep_idx % test_every == 0:
+			model.eval()
+			for features in dataloader_test:
+				if args.model == 'rank':
+					# forward doc
+					out = model(features['encoded_input'][0].to(DEVICE))
+				elif args.model == 'bert':
+					# forward doc
+					out = model(**features['encoded_input'][0].to(DEVICE))
+				elif args.model == 'sparseBERT':
 
-				out_queries = model(**features['encoded_queries'].to(DEVICE))
-				out_docs = model(**features['encoded_docs'][0].to(DEVICE)) 
-				out = torch.bmm(out_queries.unsqueeze(1), out_docs.unsqueeze(-1)).squeeze()
-				l0_query = (out_queries == 0).float().mean(1).mean(0)
-				l0_docs = (out_docs == 0).float().mean(1).mean(0)
-				writer.add_scalar('Test/L0_query', l0_query, total_examples_seen)
-				writer.add_scalar('Test/L0_docs', l0_docs, total_examples_seen)
-			out = out.data.cpu()
-			batch_num_examples = len(features['meta'])
-			
-			# for each example in batch
-			for i in range(batch_num_examples):
-				q = features['meta'][i][0]
-				d = features['meta'][i][1]
-				# sanity check store orcale scores as well
-				#orig_score = features['meta'][i][2]
-				if q not in res_test:
-					res_test[q] = {}
-					original_scores[q] = {}
-				if d not in res_test[q]:
-					res_test[q][d] = 0
-			#		original_scores[q][d] = 0
-		#		original_scores[q][d] += orig_score
-				#res_test[q][d] += out[i][0].detach().numpy()
-				res_test[q][d] += out[i].detach().numpy()
-			# if number of examples < batch size we are done
-		sorted_scores = []
-		#sorted_scores_original = []
-		q_ids = []
-		# for each query sort after scores
-		for qid, docs in res_test.items():
-			sorted_scores_q = [(doc_id, docs[doc_id]) for doc_id in sorted(docs, key=docs.get, reverse=True)]
-			#sorted_scores_original_q = [(doc_id, original_scores[qid][doc_id]) for doc_id in sorted(original_scores[qid], key=original_scores[qid].get, reverse=True)]
-			q_ids.append(qid)
-			sorted_scores.append(sorted_scores_q)
-			#sorted_scores_original.append(sorted_scores_original_q)
+					out_queries = model(**features['encoded_queries'].to(DEVICE))
+					out_docs = model(**features['encoded_docs'][0].to(DEVICE)) 
+					out = torch.bmm(out_queries.unsqueeze(1), out_docs.unsqueeze(-1)).squeeze()
+					l0_query = (out_queries == 0).float().mean(1).mean(0)
+					l0_docs = (out_docs == 0).float().mean(1).mean(0)
+					writer.add_scalar('Test/L0_query', l0_query, total_examples_seen)
+					writer.add_scalar('Test/L0_docs', l0_docs, total_examples_seen)
+				out = out.data.cpu()
+				batch_num_examples = len(features['meta'])
+				
+				# for each example in batch
+				for i in range(batch_num_examples):
+					q = features['meta'][i][0]
+					d = features['meta'][i][1]
+					# sanity check store orcale scores as well
+					#orig_score = features['meta'][i][2]
+					if q not in res_test:
+						res_test[q] = {}
+						original_scores[q] = {}
+					if d not in res_test[q]:
+						res_test[q][d] = 0
+				#		original_scores[q][d] = 0
+			#		original_scores[q][d] += orig_score
+					#res_test[q][d] += out[i][0].detach().numpy()
+					res_test[q][d] += out[i].detach().numpy()
+				# if number of examples < batch size we are done
+			sorted_scores = []
+			#sorted_scores_original = []
+			q_ids = []
+			# for each query sort after scores
+			for qid, docs in res_test.items():
+				sorted_scores_q = [(doc_id, docs[doc_id]) for doc_id in sorted(docs, key=docs.get, reverse=True)]
+				#sorted_scores_original_q = [(doc_id, original_scores[qid][doc_id]) for doc_id in sorted(original_scores[qid], key=original_scores[qid].get, reverse=True)]
+				q_ids.append(qid)
+				sorted_scores.append(sorted_scores_q)
+				#sorted_scores_original.append(sorted_scores_original_q)
 
-		#mrr = 0
-		#for qid, docs in res_test.items():
-	#		ranked = sorted(docs, key=docs.get, reverse=True)
+			#mrr = 0
+			#for qid, docs in res_test.items():
+		#		ranked = sorted(docs, key=docs.get, reverse=True)
 #			for i in range(min(len(ranked), 10)):
 #				if ranked[i] in qrels[qid]:
 #					mrr += 1 / (i + 1)
